@@ -63,16 +63,17 @@ for col in forecast_cols:
 # 2️⃣ Cap extreme jumps relative to previous value
 def cap_jumps(series, max_pct=0.15):
     """Cap percentage changes between consecutive points."""
-    series = series.copy()
+    series = series.copy().reset_index(drop=True)  # ensure 0..N index
     for i in range(1, len(series)):
-        prev = series[i-1]
-        cur = series[i]
+        prev = series.iloc[i-1]
+        cur = series.iloc[i]
         if prev == 0:
             continue
         change = (cur - prev) / abs(prev)
         if abs(change) > max_pct:
-            series[i] = prev * (1 + np.sign(change) * max_pct)
+            series.iloc[i] = prev * (1 + np.sign(change) * max_pct)
     return series
+
 
 # Apply capping
 df["RF"] = cap_jumps(df["RF"], max_pct=0.15)
@@ -173,3 +174,4 @@ ax.xaxis.set_major_formatter(formatter)
 fig.autofmt_xdate(rotation=25)
 
 st.pyplot(fig, use_container_width=True)
+
