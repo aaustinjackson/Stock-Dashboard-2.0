@@ -41,30 +41,14 @@ for col in ["Actual", "ARIMA", "RF", "Prophet"]:
     df[col] = pd.to_numeric(df[col], errors="coerce")
 
 # ---------------------------------------------
-# Remove warm-up spikes
+# Remove initial NA and warm-up spikes
 # ---------------------------------------------
 df = df[df["Actual"].notna()].copy()
 df.reset_index(drop=True, inplace=True)
-
-# Remove rows before first actual
-first_actual_date = df["Date"].min()
-df = df[df["Date"] >= first_actual_date].copy()
+df = df[df["Date"] >= df["Date"].min()].copy()
 df = df.dropna(subset=["ARIMA", "RF", "Prophet"], how="all")
-
-# Remove initial spike row if present
 if len(df) > 1:
-    df = df.iloc[1:].copy()
-
-# Function to remove forecast jumps > threshold
-def remove_spike_rows(df, cols, threshold=0.5):
-    mask = pd.Series(True, index=df.index)
-    for col in cols:
-        pct_jump = df[col].pct_change().abs()
-        mask &= (pct_jump < threshold) | (pct_jump.isna())
-    return df[mask].copy()
-
-df = remove_spike_rows(df, ["ARIMA", "RF", "Prophet"])
-df.reset_index(drop=True, inplace=True)
+    df = df.iloc[1:].copy()  # remove first warm-up row
 
 # ---------------------------------------------
 # Top controls: Date Range Selector + Next-Day Forecasts
@@ -123,6 +107,26 @@ with col2:
     st.write(f"🔵 Prophet: {fmt(next_prophet)}")
 
 # ---------------------------------------------
+# Smooth and remove spikes from forecasts
+# ---------------------------------------------
+forecast_cols = ["ARIMA", "RF"]
+
+# Rolling median smoothing to reduce spikes
+for col in forecast_cols:
+    df_filtered[col] = df_filtered[col].rolling(window=3, center=True, min_periods=1).median()
+
+# Optional: remove extreme jumps (>50% day-over-day)
+def remove_spikes(df, cols, threshold=0.5):
+    mask = pd.Series(True, index=df.index)
+    for col in cols:
+        pct_jump = df[col].pct_change().abs()
+        mask &= (pct_jump < threshold) | (pct_jump.isna())
+    return df[mask].copy()
+
+df_filtered = remove_spikes(df_filtered, forecast_cols)
+df_filtered.reset_index(drop=True, inplace=True)
+
+# ---------------------------------------------
 # Compute forecast errors
 # ---------------------------------------------
 arima_error = df_filtered["Actual"] - df_filtered["ARIMA"]
@@ -160,4 +164,3 @@ ax.xaxis.set_major_formatter(formatter)
 fig.autofmt_xdate(rotation=25)
 
 st.pyplot(fig, use_container_width=True)
-
