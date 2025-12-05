@@ -107,26 +107,34 @@ with col2:
     st.write(f"🔵 Prophet: {fmt(next_prophet)}")
 
 # ---------------------------------------------
+# Remove warm-up rows (first forecast row) from df
+# ---------------------------------------------
+df = df[df["Actual"].notna()].copy()
+df.reset_index(drop=True, inplace=True)
+if len(df) > 1:
+    df = df.iloc[1:].copy()  # remove first row (warm-up spike)
+
+# ---------------------------------------------
 # Smooth and remove spikes from forecasts (FULL dataset)
 # ---------------------------------------------
-forecast_cols = ["ARIMA", "RF"]
+forecast_cols = ["ARIMA", "RF", "Prophet"]
 
 # Rolling median smoothing on full df
 for col in forecast_cols:
     df[col] = df[col].rolling(window=3, center=True, min_periods=1).median()
 
-# Remove extreme jumps
-def remove_spikes(df, cols, threshold=0.5):
-    mask = pd.Series(True, index=df.index)
-    for col in cols:
-        pct_jump = df[col].pct_change().abs()
-        mask &= (pct_jump < threshold) | (pct_jump.isna())
+# Remove extreme jumps for RF only (ARIMA/Prophet usually don't spike)
+def remove_spikes(df, col, threshold=0.5):
+    pct_jump = df[col].pct_change().abs()
+    mask = (pct_jump < threshold) | (pct_jump.isna())
     return df[mask].copy()
 
-df = remove_spikes(df, forecast_cols)
+df = remove_spikes(df, "RF", threshold=0.5)
 df.reset_index(drop=True, inplace=True)
 
+# ---------------------------------------------
 # Then filter by date range
+# ---------------------------------------------
 df_filtered = df[(df["Date"] >= start_date) & (df["Date"] <= max_date)].copy()
 
 
@@ -168,4 +176,5 @@ ax.xaxis.set_major_formatter(formatter)
 fig.autofmt_xdate(rotation=25)
 
 st.pyplot(fig, use_container_width=True)
+
 
