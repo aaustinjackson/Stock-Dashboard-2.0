@@ -2,38 +2,24 @@ name: Update Stock Data
 
 on:
   schedule:
-    - cron: '0 6 * * *'   # Runs every day at 6 AM UTC
-  workflow_dispatch:       # Allows manual triggering
+    - cron: '0 0 * * 0'  # every Sunday at midnight
+  workflow_dispatch:
 
 jobs:
-  update:
+  update_data:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.11
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install -r etl/requirements.txt  # if you have a requirements file
 
-      - name: Update stock data
-        run: python update_stock_data.py
-
-      - name: Precompute forecasts
-        run: python precompute_forecasts.py
-
-      - name: Commit and push updates
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add data/top10_stock_data_cleaned.csv
-          git add data/precomputed_forecasts/*
-          git commit -m "Auto-update stock data & forecasts $(date '+%Y-%m-%d')"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run update script
+        run: python etl/update_stock_data.py
