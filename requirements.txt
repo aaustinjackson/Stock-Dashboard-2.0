@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+matplotlib
+scikit-learn
+statsmodels
+python-dateutil
+pytz
+prophet>=1.2.1
+cmdstanpy
