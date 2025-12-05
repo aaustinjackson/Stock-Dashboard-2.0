@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import streamlit as st
-from datetime import timedelta, datetime
+from datetime import timedelta
 import numpy as np
 
 # ---------------------------------------------
@@ -29,7 +29,7 @@ tickers = sorted(tickers)
 ticker = st.selectbox("Select a stock:", tickers)
 
 # ---------------------------------------------
-# Load precomputed forecasts for this ticker
+# Load precomputed forecasts
 # ---------------------------------------------
 forecast_file = os.path.join(precomputed_dir, f"{ticker}_forecasts.csv")
 if not os.path.exists(forecast_file):
@@ -37,77 +37,90 @@ if not os.path.exists(forecast_file):
     st.stop()
 
 df = pd.read_csv(forecast_file, parse_dates=["Date"])
-df["Actual"] = pd.to_numeric(df["Actual"], errors="coerce")
-df["ARIMA"] = pd.to_numeric(df["ARIMA"], errors="coerce")
-df["RF"] = pd.to_numeric(df["RF"], errors="coerce")
-df["Prophet"] = pd.to_numeric(df["Prophet"], errors="coerce")
+for col in ["Actual", "ARIMA", "RF", "Prophet"]:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
 
-# ---------------------------------------------------------
-# Remove all rows before actual data begins
-# ---------------------------------------------------------
+# ---------------------------------------------
+# Remove warm-up spikes
+# ---------------------------------------------
 df = df[df["Actual"].notna()].copy()
 df.reset_index(drop=True, inplace=True)
+
+# Remove rows before first actual
 first_actual_date = df["Date"].min()
 df = df[df["Date"] >= first_actual_date].copy()
 df = df.dropna(subset=["ARIMA", "RF", "Prophet"], how="all")
 
+# Remove initial spike row if present
+if len(df) > 1:
+    df = df.iloc[1:].copy()
 
-# ---------------------------------------------------------
-# Robust initial spike removal (skip first few forecast rows)
-# ---------------------------------------------------------
-def remove_initial_spikes_robust(df, cols, skip_rows=3, threshold=0.5):
-    """
-    Removes the first `skip_rows` after Actual begins
-    AND any rows where forecast jumps > threshold fraction of Actual.
-    """
-    if len(df) > skip_rows:
-        df = df.iloc[skip_rows:].copy()
-
-    # Optional: remove any remaining extreme outliers
+# Function to remove forecast jumps > threshold
+def remove_spike_rows(df, cols, threshold=0.5):
     mask = pd.Series(True, index=df.index)
     for col in cols:
-        pct_dev = abs(df[col] - df["Actual"]) / df["Actual"]
-        mask &= (pct_dev < threshold) | (pct_dev.isna())
+        pct_jump = df[col].pct_change().abs()
+        mask &= (pct_jump < threshold) | (pct_jump.isna())
+    return df[mask].copy()
 
-    df = df[mask].copy()
-    df.reset_index(drop=True, inplace=True)
-    return df
-
-
-# Apply
-df = remove_initial_spikes_robust(df, ["ARIMA", "RF", "Prophet"], skip_rows=3, threshold=0.5)
+df = remove_spike_rows(df, ["ARIMA", "RF", "Prophet"])
+df.reset_index(drop=True, inplace=True)
 
 # ---------------------------------------------
-# Date Range Selector
+# Top controls: Date Range Selector + Next-Day Forecasts
 # ---------------------------------------------
-st.subheader("Select Time Range")
-range_option = st.radio(
-    "Choose period:",
-    ["1 Week", "1 Month", "1 Year", "All Data"],
-    index=1,
-    horizontal=True
-)
+st.subheader("Controls & Forecasts")
+col1, col2 = st.columns([2, 1])
 
-min_date = df["Date"].min()
-max_date = df["Date"].max()
+# --- Column 1: Date Range Selector ---
+with col1:
+    range_option = st.radio(
+        "Choose period:",
+        ["1 Week", "1 Month", "1 Year", "All Data"],
+        index=1,
+        horizontal=True
+    )
 
-if range_option == "1 Week":
-    start_date = max_date - pd.Timedelta(days=7)
-elif range_option == "1 Month":
-    start_date = max_date - pd.Timedelta(days=30)
-elif range_option == "1 Year":
-    start_date = max_date - pd.Timedelta(days=365)
-else:
-    start_date = min_date
+    min_date = df["Date"].min()
+    max_date = df["Date"].max()
 
-start_date = max(start_date, min_date)
-df_filtered = df[(df["Date"] >= start_date) & (df["Date"] <= max_date)].copy()
+    if range_option == "1 Week":
+        start_date = max_date - pd.Timedelta(days=7)
+    elif range_option == "1 Month":
+        start_date = max_date - pd.Timedelta(days=30)
+    elif range_option == "1 Year":
+        start_date = max_date - pd.Timedelta(days=365)
+    else:
+        start_date = min_date
 
-if df_filtered.empty:
-    st.warning("No data available in the selected date range.")
-    st.stop()
+    start_date = max(start_date, min_date)
 
-st.write(f"Selected date range: {df_filtered['Date'].min().date()} → {df_filtered['Date'].max().date()}")
+    df_filtered = df[(df["Date"] >= start_date) & (df["Date"] <= max_date)].copy()
+    if df_filtered.empty:
+        st.warning("No data available in the selected date range.")
+        st.stop()
+
+    st.write(f"Selected date range: {df_filtered['Date'].min().date()} → {df_filtered['Date'].max().date()}")
+
+# --- Column 2: Next-Day Forecasts ---
+with col2:
+    next_date = df_filtered["Date"].max() + pd.Timedelta(days=1)
+
+    def next_day_forecast(df):
+        next_arima = df["ARIMA"].iloc[-1]
+        next_rf = df["RF"].iloc[-1]
+        next_prophet = df["Prophet"].iloc[-1]
+        return next_arima, next_rf, next_prophet
+
+    next_arima, next_rf, next_prophet = next_day_forecast(df_filtered)
+
+    def fmt(val):
+        return f"{val:.2f}" if pd.notna(val) else "N/A"
+
+    st.write(f"**Predictions for {next_date.strftime('%Y-%m-%d')}:**")
+    st.write(f"🔴 ARIMA: {fmt(next_arima)}")
+    st.write(f"🟢 Random Forest: {fmt(next_rf)}")
+    st.write(f"🔵 Prophet: {fmt(next_prophet)}")
 
 # ---------------------------------------------
 # Compute forecast errors
@@ -145,32 +158,5 @@ formatter = mdates.ConciseDateFormatter(locator)
 ax.xaxis.set_major_locator(locator)
 ax.xaxis.set_major_formatter(formatter)
 fig.autofmt_xdate(rotation=25)
+
 st.pyplot(fig, use_container_width=True)
-
-# ---------------------------------------------
-# Next-Day Forecasts
-# ---------------------------------------------
-st.subheader("Next-Day Forecasts")
-next_date = df_filtered["Date"].max() + pd.Timedelta(days=1)
-
-
-def next_day_forecast(df):
-    next_arima = df["ARIMA"].iloc[-1]
-    next_rf = df["RF"].iloc[-1]
-    next_prophet = df["Prophet"].iloc[-1]
-    return next_arima, next_rf, next_prophet
-
-
-next_arima, next_rf, next_prophet = next_day_forecast(df)
-
-
-def fmt(val):
-    return f"{val:.2f}" if pd.notna(val) else "N/A"
-
-
-st.write(f"**Predictions for {next_date.strftime('%Y-%m-%d')}:**")
-st.write(f"🔴 ARIMA: {fmt(next_arima)}")
-st.write(f"🟢 Random Forest: {fmt(next_rf)}")
-st.write(f"🔵 Prophet: {fmt(next_prophet)}")
-
-
