@@ -1,5 +1,6 @@
 name: Update Stock Data
 
+# Runs weekly and manually
 on:
   schedule:
     - cron: '0 0 * * 0'  # every Sunday at midnight
@@ -9,17 +10,21 @@ jobs:
   update_data:
     runs-on: ubuntu-latest
     steps:
+      # Checkout the repo
       - uses: actions/checkout@v3
 
+      # Set up Python
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
+      # Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r etl/requirements.txt  # if you have a requirements file
+          pip install -r requirements.txt
 
-      - name: Run update script
-        run: python etl/update_stock_data.py
+      # Run the update script
+      - name: Run stock update
+        run: python StockBI/etl/update_stock_data.py
