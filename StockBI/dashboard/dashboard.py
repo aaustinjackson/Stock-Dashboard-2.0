@@ -17,7 +17,7 @@ precomputed_dir = os.path.join(project_root, "data", "precomputed_forecasts")
 # Streamlit UI
 # ---------------------------------------------
 st.set_page_config(page_title="Stock Forecast Dashboard", layout="wide")
-st.title("Stock Forecast Dashboard")
+st.title("📈 Stock Forecast Dashboard")
 st.write("Compare ARIMA, Random Forest, and Prophet model forecasts.")
 
 # ---------------------------------------------
@@ -41,35 +41,30 @@ for col in ["Actual", "ARIMA", "RF", "Prophet"]:
     df[col] = pd.to_numeric(df[col], errors="coerce")
 
 # ---------------------------------------------
-# Remove initial NA and warm-up
+# Remove warm-up spikes
 # ---------------------------------------------
 df = df[df["Actual"].notna()].copy()
 df.reset_index(drop=True, inplace=True)
+
+# Remove rows before first actual
+first_actual_date = df["Date"].min()
+df = df[df["Date"] >= first_actual_date].copy()
 df = df.dropna(subset=["ARIMA", "RF", "Prophet"], how="all")
+
+# Remove initial spike row if present
 if len(df) > 1:
-    df = df.iloc[1:].copy()  # remove first warm-up row
+    df = df.iloc[1:].copy()
 
-# ---------------------------------------------
-# Spike removal for Random Forest
-# ---------------------------------------------
-# Rolling median smoothing
-df["RF_smooth"] = df["RF"].rolling(window=3, center=True, min_periods=1).median()
+# Function to remove forecast jumps > threshold
+def remove_spike_rows(df, cols, threshold=0.5):
+    mask = pd.Series(True, index=df.index)
+    for col in cols:
+        pct_jump = df[col].pct_change().abs()
+        mask &= (pct_jump < threshold) | (pct_jump.isna())
+    return df[mask].copy()
 
-# Cap extreme jumps
-def cap_spikes(series, max_pct=0.15):
-    series = series.copy().reset_index(drop=True)
-    for i in range(1, len(series)):
-        prev = series.iloc[i-1]
-        cur = series.iloc[i]
-        if pd.isna(cur) or pd.isna(prev) or prev == 0:
-            continue
-        change = (cur - prev) / abs(prev)
-        if abs(change) > max_pct:
-            series.iloc[i] = prev * (1 + np.sign(change) * max_pct)
-    return series
-
-df["RF"] = cap_spikes(df["RF_smooth"], max_pct=0.15)
-df.drop(columns=["RF_smooth"], inplace=True)
+df = remove_spike_rows(df, ["ARIMA", "RF", "Prophet"])
+df.reset_index(drop=True, inplace=True)
 
 # ---------------------------------------------
 # Top controls: Date Range Selector + Next-Day Forecasts
