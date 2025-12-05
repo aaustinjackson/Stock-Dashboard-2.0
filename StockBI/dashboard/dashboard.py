@@ -107,15 +107,15 @@ with col2:
     st.write(f"🔵 Prophet: {fmt(next_prophet)}")
 
 # ---------------------------------------------
-# Smooth and remove spikes from forecasts
+# Smooth and remove spikes from forecasts (FULL dataset)
 # ---------------------------------------------
 forecast_cols = ["ARIMA", "RF"]
 
-# Rolling median smoothing to reduce spikes
+# Rolling median smoothing on full df
 for col in forecast_cols:
-    df_filtered[col] = df_filtered[col].rolling(window=3, center=True, min_periods=1).median()
+    df[col] = df[col].rolling(window=3, center=True, min_periods=1).median()
 
-# Optional: remove extreme jumps (>50% day-over-day)
+# Remove extreme jumps
 def remove_spikes(df, cols, threshold=0.5):
     mask = pd.Series(True, index=df.index)
     for col in cols:
@@ -123,8 +123,12 @@ def remove_spikes(df, cols, threshold=0.5):
         mask &= (pct_jump < threshold) | (pct_jump.isna())
     return df[mask].copy()
 
-df_filtered = remove_spikes(df_filtered, forecast_cols)
-df_filtered.reset_index(drop=True, inplace=True)
+df = remove_spikes(df, forecast_cols)
+df.reset_index(drop=True, inplace=True)
+
+# Then filter by date range
+df_filtered = df[(df["Date"] >= start_date) & (df["Date"] <= max_date)].copy()
+
 
 # ---------------------------------------------
 # Compute forecast errors
@@ -164,3 +168,4 @@ ax.xaxis.set_major_formatter(formatter)
 fig.autofmt_xdate(rotation=25)
 
 st.pyplot(fig, use_container_width=True)
+
