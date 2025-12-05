@@ -45,10 +45,32 @@ for col in ["Actual", "ARIMA", "RF", "Prophet"]:
 # ---------------------------------------------
 df = df[df["Actual"].notna()].copy()
 df.reset_index(drop=True, inplace=True)
-df = df[df["Date"] >= df["Date"].min()].copy()
 df = df.dropna(subset=["ARIMA", "RF", "Prophet"], how="all")
 if len(df) > 1:
     df = df.iloc[1:].copy()  # remove first warm-up row
+
+# ---------------------------------------------
+# Smooth and remove spikes from forecasts (FULL dataset)
+# ---------------------------------------------
+forecast_cols = ["ARIMA", "RF", "Prophet"]
+
+# --- Rolling median smoothing ---
+for col in forecast_cols:
+    df[col] = df[col].rolling(window=3, center=True, min_periods=1).median()
+
+# --- Remove extreme jumps robustly ---
+def remove_spikes(df, cols, z_thresh=3):
+    df_clean = df.copy()
+    for col in cols:
+        rolling_mean = df_clean[col].rolling(window=5, center=True, min_periods=1).mean()
+        rolling_std = df_clean[col].rolling(window=5, center=True, min_periods=1).std()
+        z_score = ((df_clean[col] - rolling_mean) / rolling_std).abs()
+        df_clean.loc[z_score > z_thresh, col] = np.nan
+        df_clean[col] = df_clean[col].interpolate(method='linear')
+    return df_clean
+
+df = remove_spikes(df, forecast_cols)
+df.reset_index(drop=True, inplace=True)
 
 # ---------------------------------------------
 # Top controls: Date Range Selector + Next-Day Forecasts
@@ -111,29 +133,6 @@ with col2:
     st.write(f"🔴 ARIMA: {fmt(next_arima)}")
     st.write(f"🟢 Random Forest: {fmt(next_rf)}")
     st.write(f"🔵 Prophet: {fmt(next_prophet)}")
-
-# ---------------------------------------------
-# Smooth and remove spikes from forecasts (FULL dataset)
-# ---------------------------------------------
-forecast_cols = ["ARIMA", "RF"]
-
-# Rolling median smoothing on full df
-for col in forecast_cols:
-    df[col] = df[col].rolling(window=3, center=True, min_periods=1).median()
-
-# Remove extreme jumps
-def remove_spikes(df, cols, threshold=0.5):
-    mask = pd.Series(True, index=df.index)
-    for col in cols:
-        pct_jump = df[col].pct_change().abs()
-        mask &= (pct_jump < threshold) | (pct_jump.isna())
-    return df[mask].copy()
-
-df = remove_spikes(df, forecast_cols)
-df.reset_index(drop=True, inplace=True)
-
-# Then filter by date range again
-df_filtered = df[(df["Date"] >= start_date) & (df["Date"] <= max_date)].copy()
 
 # ---------------------------------------------
 # Compute forecast errors
