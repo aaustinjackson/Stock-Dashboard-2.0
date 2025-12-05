@@ -45,10 +45,39 @@ for col in ["Actual", "ARIMA", "RF", "Prophet"]:
 # ---------------------------------------------
 df = df[df["Actual"].notna()].copy()
 df.reset_index(drop=True, inplace=True)
-df = df[df["Date"] >= df["Date"].min()].copy()
-df = df.dropna(subset=["ARIMA", "RF", "Prophet"], how="all")
 if len(df) > 1:
     df = df.iloc[1:].copy()  # remove first warm-up row
+
+# Drop rows where all forecasts are missing
+df = df.dropna(subset=["ARIMA", "RF", "Prophet"], how="all")
+
+# ---------------------------------------------
+# Smooth forecasts and remove spikes robustly
+# ---------------------------------------------
+forecast_cols = ["ARIMA", "RF", "Prophet"]
+
+# 1️⃣ Rolling median smoothing
+for col in forecast_cols:
+    df[col] = df[col].rolling(window=3, center=True, min_periods=1).median()
+
+# 2️⃣ Cap extreme jumps relative to previous value
+def cap_jumps(series, max_pct=0.15):
+    """Cap percentage changes between consecutive points."""
+    series = series.copy()
+    for i in range(1, len(series)):
+        prev = series[i-1]
+        cur = series[i]
+        if prev == 0:
+            continue
+        change = (cur - prev) / abs(prev)
+        if abs(change) > max_pct:
+            series[i] = prev * (1 + np.sign(change) * max_pct)
+    return series
+
+# Apply capping
+df["RF"] = cap_jumps(df["RF"], max_pct=0.15)
+df["ARIMA"] = cap_jumps(df["ARIMA"], max_pct=0.3)
+df["Prophet"] = cap_jumps(df["Prophet"], max_pct=0.3)
 
 # ---------------------------------------------
 # Top controls: Date Range Selector + Next-Day Forecasts
@@ -107,49 +136,6 @@ with col2:
     st.write(f"🔵 Prophet: {fmt(next_prophet)}")
 
 # ---------------------------------------------
-# Remove warm-up row
-# ---------------------------------------------
-df = df[df["Actual"].notna()].copy()
-df.reset_index(drop=True, inplace=True)
-if len(df) > 1:
-    df = df.iloc[1:].copy()  # remove first row
-
-# ---------------------------------------------
-# Smooth forecasts and remove spikes robustly
-# ---------------------------------------------
-forecast_cols = ["ARIMA", "RF", "Prophet"]
-
-# 1️⃣ Rolling median smoothing
-for col in forecast_cols:
-    df[col] = df[col].rolling(window=3, center=True, min_periods=1).median()
-
-# 2️⃣ Cap extreme jumps (relative to previous value)
-def cap_jumps(series, max_pct=0.15):
-    """Cap percentage changes between consecutive points."""
-    series = series.copy()
-    for i in range(1, len(series)):
-        prev = series[i-1]
-        cur = series[i]
-        if prev == 0:
-            continue
-        change = (cur - prev) / abs(prev)
-        if abs(change) > max_pct:
-            series[i] = prev * (1 + np.sign(change) * max_pct)
-    return series
-
-# Apply capping to RF (and optionally other forecasts)
-df["RF"] = cap_jumps(df["RF"], max_pct=0.15)
-df["ARIMA"] = cap_jumps(df["ARIMA"], max_pct=0.3)    # ARIMA usually smoother
-df["Prophet"] = cap_jumps(df["Prophet"], max_pct=0.3)
-
-# ---------------------------------------------
-# Now filter by date range
-# ---------------------------------------------
-df_filtered = df[(df["Date"] >= start_date) & (df["Date"] <= max_date)].copy()
-
-
-
-# ---------------------------------------------
 # Compute forecast errors
 # ---------------------------------------------
 arima_error = df_filtered["Actual"] - df_filtered["ARIMA"]
@@ -187,6 +173,3 @@ ax.xaxis.set_major_formatter(formatter)
 fig.autofmt_xdate(rotation=25)
 
 st.pyplot(fig, use_container_width=True)
-
-
-
