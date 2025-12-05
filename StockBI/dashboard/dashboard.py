@@ -41,44 +41,35 @@ for col in ["Actual", "ARIMA", "RF", "Prophet"]:
     df[col] = pd.to_numeric(df[col], errors="coerce")
 
 # ---------------------------------------------
-# Remove initial NA and warm-up spikes
+# Remove initial NA and warm-up
 # ---------------------------------------------
 df = df[df["Actual"].notna()].copy()
 df.reset_index(drop=True, inplace=True)
+df = df.dropna(subset=["ARIMA", "RF", "Prophet"], how="all")
 if len(df) > 1:
     df = df.iloc[1:].copy()  # remove first warm-up row
 
-# Drop rows where all forecasts are missing
-df = df.dropna(subset=["ARIMA", "RF", "Prophet"], how="all")
-
 # ---------------------------------------------
-# Smooth forecasts and remove spikes robustly
+# Spike removal for Random Forest
 # ---------------------------------------------
-forecast_cols = ["ARIMA", "RF", "Prophet"]
+# Rolling median smoothing
+df["RF_smooth"] = df["RF"].rolling(window=3, center=True, min_periods=1).median()
 
-# 1️⃣ Rolling median smoothing
-for col in forecast_cols:
-    df[col] = df[col].rolling(window=3, center=True, min_periods=1).median()
-
-# 2️⃣ Cap extreme jumps relative to previous value
-def cap_jumps(series, max_pct=0.15):
-    """Cap percentage changes between consecutive points."""
-    series = series.copy().reset_index(drop=True)  # ensure 0..N index
+# Cap extreme jumps
+def cap_spikes(series, max_pct=0.15):
+    series = series.copy().reset_index(drop=True)
     for i in range(1, len(series)):
         prev = series.iloc[i-1]
         cur = series.iloc[i]
-        if prev == 0:
+        if pd.isna(cur) or pd.isna(prev) or prev == 0:
             continue
         change = (cur - prev) / abs(prev)
         if abs(change) > max_pct:
             series.iloc[i] = prev * (1 + np.sign(change) * max_pct)
     return series
 
-
-# Apply capping
-df["RF"] = cap_jumps(df["RF"], max_pct=0.15)
-df["ARIMA"] = cap_jumps(df["ARIMA"], max_pct=0.3)
-df["Prophet"] = cap_jumps(df["Prophet"], max_pct=0.3)
+df["RF"] = cap_spikes(df["RF_smooth"], max_pct=0.15)
+df.drop(columns=["RF_smooth"], inplace=True)
 
 # ---------------------------------------------
 # Top controls: Date Range Selector + Next-Day Forecasts
@@ -174,4 +165,3 @@ ax.xaxis.set_major_formatter(formatter)
 fig.autofmt_xdate(rotation=25)
 
 st.pyplot(fig, use_container_width=True)
-
