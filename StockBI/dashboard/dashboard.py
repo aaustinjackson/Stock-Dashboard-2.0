@@ -17,7 +17,7 @@ precomputed_dir = os.path.join(project_root, "data", "precomputed_forecasts")
 # Streamlit UI
 # ---------------------------------------------
 st.set_page_config(page_title="Stock Forecast Dashboard", layout="wide")
-st.title("📈 Stock Forecast Dashboard")
+st.title("Stock Forecast Dashboard")
 st.write("Compare ARIMA, Random Forest, and Prophet model forecasts.")
 
 # ---------------------------------------------
@@ -160,3 +160,4 @@ ax.xaxis.set_major_formatter(formatter)
 fig.autofmt_xdate(rotation=25)
 
 st.pyplot(fig, use_container_width=True)
+
