@@ -17,7 +17,7 @@ precomputed_dir = os.path.join(project_root, "data", "precomputed_forecasts")
 # Streamlit UI
 # ---------------------------------------------
 st.set_page_config(page_title="Stock Forecast Dashboard", layout="wide")
-st.title("📈 Stock Forecast Dashboard")
+st.title("Stock Forecast Dashboard")
 st.write("Compare ARIMA, Random Forest, and Prophet model forecasts.")
 
 # ---------------------------------------------
@@ -41,30 +41,14 @@ for col in ["Actual", "ARIMA", "RF", "Prophet"]:
     df[col] = pd.to_numeric(df[col], errors="coerce")
 
 # ---------------------------------------------
-# Remove warm-up spikes
+# Remove initial NA and warm-up spikes
 # ---------------------------------------------
 df = df[df["Actual"].notna()].copy()
 df.reset_index(drop=True, inplace=True)
-
-# Remove rows before first actual
-first_actual_date = df["Date"].min()
-df = df[df["Date"] >= first_actual_date].copy()
+df = df[df["Date"] >= df["Date"].min()].copy()
 df = df.dropna(subset=["ARIMA", "RF", "Prophet"], how="all")
-
-# Remove initial spike row if present
 if len(df) > 1:
-    df = df.iloc[1:].copy()
-
-# Function to remove forecast jumps > threshold
-def remove_spike_rows(df, cols, threshold=0.5):
-    mask = pd.Series(True, index=df.index)
-    for col in cols:
-        pct_jump = df[col].pct_change().abs()
-        mask &= (pct_jump < threshold) | (pct_jump.isna())
-    return df[mask].copy()
-
-df = remove_spike_rows(df, ["ARIMA", "RF", "Prophet"])
-df.reset_index(drop=True, inplace=True)
+    df = df.iloc[1:].copy()  # remove first warm-up row
 
 # ---------------------------------------------
 # Top controls: Date Range Selector + Next-Day Forecasts
@@ -94,8 +78,14 @@ with col1:
         start_date = min_date
 
     start_date = max(start_date, min_date)
-
     df_filtered = df[(df["Date"] >= start_date) & (df["Date"] <= max_date)].copy()
+
+    # ----------------------------
+    # Remove first 2 rows for "All Data" to eliminate initial spike
+    # ----------------------------
+    if range_option == "All Data" and len(df_filtered) > 2:
+        df_filtered = df_filtered.iloc[2:].copy()
+
     if df_filtered.empty:
         st.warning("No data available in the selected date range.")
         st.stop()
@@ -121,6 +111,29 @@ with col2:
     st.write(f"🔴 ARIMA: {fmt(next_arima)}")
     st.write(f"🟢 Random Forest: {fmt(next_rf)}")
     st.write(f"🔵 Prophet: {fmt(next_prophet)}")
+
+# ---------------------------------------------
+# Smooth and remove spikes from forecasts (FULL dataset)
+# ---------------------------------------------
+forecast_cols = ["ARIMA", "RF"]
+
+# Rolling median smoothing on full df
+for col in forecast_cols:
+    df[col] = df[col].rolling(window=3, center=True, min_periods=1).median()
+
+# Remove extreme jumps
+def remove_spikes(df, cols, threshold=0.5):
+    mask = pd.Series(True, index=df.index)
+    for col in cols:
+        pct_jump = df[col].pct_change().abs()
+        mask &= (pct_jump < threshold) | (pct_jump.isna())
+    return df[mask].copy()
+
+df = remove_spikes(df, forecast_cols)
+df.reset_index(drop=True, inplace=True)
+
+# Then filter by date range again
+df_filtered = df[(df["Date"] >= start_date) & (df["Date"] <= max_date)].copy()
 
 # ---------------------------------------------
 # Compute forecast errors
