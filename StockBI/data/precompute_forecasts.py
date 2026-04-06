@@ -6,10 +6,11 @@ from sklearn.ensemble import RandomForestRegressor
 from prophet import Prophet
 
 # ---------------------------------------------
-# Paths
+# Paths (relative, works on Windows & Linux)
 # ---------------------------------------------
-data_path = r"C:\Users\austi\PycharmProjects\StockBI\data\top10_stock_data_cleaned.csv"
-output_dir = r"C:\Users\austi\PycharmProjects\StockBI\data\precomputed_forecasts"
+repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # StockBI/
+data_path = os.path.join(repo_root, "data", "top10_stock_data_cleaned.csv")
+output_dir = os.path.join(repo_root, "data", "precomputed_forecasts")
 os.makedirs(output_dir, exist_ok=True)
 
 # ---------------------------------------------
