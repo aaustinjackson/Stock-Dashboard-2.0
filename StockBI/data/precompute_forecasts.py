@@ -42,25 +42,32 @@ def forecast_rf(train_df, test_df, lags=3):
     if train_df.empty:
         val = float(test_df["Close"].iloc[0] if pd.notna(test_df["Close"].iloc[0]) else 0)
         return pd.Series([val]*len(test_df), index=test_df["Date"])
+    
     rf_data = train_df.copy().sort_values("Date")
     for lag in range(1, lags+1):
         rf_data[f"lag_{lag}"] = rf_data["Close"].shift(lag)
     rf_data = rf_data.dropna()
+    
     if rf_data.empty:
         val = float(train_df["Close"].iloc[-1])
         return pd.Series([val]*len(test_df), index=test_df["Date"])
+    
     X_train = rf_data[[f"lag_{i}" for i in range(1,lags+1)]].values
     y_train = rf_data["Close"].values
     model = RandomForestRegressor(n_estimators=200, random_state=42)
     model.fit(X_train, y_train)
+    
+    # Use last 'lags' points from training as starting history
     history_vals = list(train_df["Close"].astype(float).values[-lags:])
     preds = []
+    
     for i in range(len(test_df)):
         features = np.array(history_vals[-lags:]).reshape(1,-1)
         pred = model.predict(features)[0]
         preds.append(pred)
-        val = test_df["Close"].iloc[i]
-        history_vals.append(float(val) if pd.notna(val) else float(pred))
+        # append the prediction itself, not the actual
+        history_vals.append(float(pred))
+    
     return pd.Series(preds, index=test_df["Date"])
 
 def forecast_prophet(train_df, test_df):
