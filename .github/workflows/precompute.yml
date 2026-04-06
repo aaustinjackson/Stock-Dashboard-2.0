@@ -1,9 +1,14 @@
 name: Precompute Forecasts
 
+# Run weekly or manually
 on:
   schedule:
     - cron: '0 2 * * 0'  # every Sunday at 2 AM
   workflow_dispatch:
+
+# Grant write access for committing
+permissions:
+  contents: write
 
 jobs:
   precompute:
@@ -11,6 +16,8 @@ jobs:
     steps:
       # Checkout the repo
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # needed to push changes
 
       # Set up Python
       - name: Set up Python
@@ -24,6 +31,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Run precompute forecasts
+      # Run the forecast precompute script
       - name: Run precompute forecasts
         run: python StockBI/data/precompute_forecasts.py
+
+      # Commit & push any changes to precomputed forecasts
+      - name: Commit precomputed forecasts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add StockBI/data/precomputed_forecasts/
+          git diff --cached --quiet || git commit -m "Update precomputed forecasts [skip ci]"
+          git push
