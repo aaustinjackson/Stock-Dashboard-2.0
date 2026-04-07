@@ -52,21 +52,28 @@ def forecast_rf(train_df, test_df, lags=3):
         val = float(train_df["Close"].iloc[-1])
         return pd.Series([val]*len(test_df), index=test_df["Date"])
     
-    X_train = rf_data[[f"lag_{i}" for i in range(1,lags+1)]].values
+    X_train = rf_data[[f"lag_{i}" for i in range(1, lags+1)]].values
     y_train = rf_data["Close"].values
     model = RandomForestRegressor(n_estimators=200, random_state=42)
     model.fit(X_train, y_train)
     
-    # Use last 'lags' points from training as starting history
-    history_vals = list(train_df["Close"].astype(float).values[-lags:])
-    preds = []
+    # Build a full history from train_df actuals for rolling lag features
+    all_closes = list(train_df.sort_values("Date")["Close"].astype(float).values)
+    test_closes = list(test_df["Close"].astype(float).values)  # actuals where available
     
+    preds = []
     for i in range(len(test_df)):
-        features = np.array(history_vals[-lags:]).reshape(1,-1)
+        history_window = all_closes[-lags:]
+        if len(history_window) < lags:
+            history_window = [history_window[0]] * (lags - len(history_window)) + history_window
+        
+        features = np.array(history_window).reshape(1, -1)
         pred = model.predict(features)[0]
         preds.append(pred)
-        # append the prediction itself, not the actual
-        history_vals.append(float(pred))
+        
+        # ✅ Use actual close if available, otherwise fall back to prediction
+        actual = test_closes[i]
+        all_closes.append(actual if pd.notna(actual) else pred)
     
     return pd.Series(preds, index=test_df["Date"])
 
