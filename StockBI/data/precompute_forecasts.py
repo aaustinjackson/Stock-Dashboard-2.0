@@ -19,110 +19,89 @@ os.makedirs(output_dir, exist_ok=True)
 df_all = pd.read_csv(data_path, parse_dates=["Date"])
 df_all["Close"] = pd.to_numeric(df_all["Close"], errors="coerce")
 df_all = df_all.dropna(subset=["Close"])
-
 tickers = df_all["Ticker"].dropna().astype(str).unique()
 
 # ---------------------------------------------
-# ARIMA
+# ARIMA (walk-forward, uses actuals)
 # ---------------------------------------------
-def forecast_arima(train_df, test_df, window=5):
-    history = list(train_df["Close"].astype(float))
+def forecast_arima(df, window=5):
+    history = []
     preds = []
 
-    for i in range(len(test_df)):
-        window_data = history[-window:] if len(history) >= window else history
+    for i in range(len(df)):
+        actual = df["Close"].iloc[i]
+        if i < window:
+            preds.append(actual)
+            history.append(actual)
+            continue
+
+        window_data = history[-window:]
         try:
-            model = ARIMA(window_data, order=(1,1,0))
-            model_fit = model.fit()
-            pred = model_fit.forecast()[0]
+            model = ARIMA(window_data, order=(1, 1, 0))
+            pred = model.fit().forecast()[0]
         except:
             pred = window_data[-1]
 
         preds.append(pred)
-        history.append(pred)  # no leakage
+        history.append(actual)  # always use actual to avoid drift
 
-    return pd.Series(preds, index=test_df["Date"])
-
+    return pd.Series(preds, index=df["Date"])
 
 # ---------------------------------------------
-# Random Forest (FIXED)
+# Random Forest (train once, predict with rolling actuals)
 # ---------------------------------------------
-def forecast_rf(train_df, test_df, lags=10):
-    rf_data = train_df.copy().sort_values("Date")
+def forecast_rf(df, lags=10):
+    closes = df["Close"].astype(float).values
+    dates = df["Date"].values
+    n = len(df)
 
-    # Lag features
-    for lag in range(1, lags + 1):
-        rf_data[f"lag_{lag}"] = rf_data["Close"].shift(lag)
+    # Build lag features from the full series
+    def make_features(close_array):
+        rows = []
+        for i in range(len(close_array)):
+            if i < lags:
+                rows.append(None)
+                continue
+            lag_vals = list(close_array[i - lags:i])
+            rows.append(lag_vals)
+        return rows
 
-    # Additional features (IMPORTANT)
-    rf_data["returns"] = rf_data["Close"].pct_change()
-    rf_data["rolling_mean_5"] = rf_data["Close"].rolling(5).mean()
-    rf_data["rolling_std_5"] = rf_data["Close"].rolling(5).std()
-    rf_data["day_of_week"] = rf_data["Date"].dt.dayofweek
+    feature_rows = make_features(closes)
 
-    rf_data = rf_data.dropna()
+    # Collect valid training samples (all rows where we have lags)
+    X_train, y_train = [], []
+    for i in range(lags, n):
+        X_train.append(feature_rows[i])
+        y_train.append(closes[i])
 
-    if rf_data.empty:
-        val = float(train_df["Close"].iloc[-1])
-        return pd.Series([val] * len(test_df), index=test_df["Date"])
+    X_train = np.array(X_train)
+    y_train = np.array(y_train)
 
-    feature_cols = (
-        [f"lag_{i}" for i in range(1, lags + 1)] +
-        ["returns", "rolling_mean_5", "rolling_std_5", "day_of_week"]
-    )
-
-    X_train = rf_data[feature_cols].values
-    y_train = rf_data["Close"].values
-
-    model = RandomForestRegressor(
-        n_estimators=300,
-        max_depth=10,
-        random_state=42
-    )
+    model = RandomForestRegressor(n_estimators=200, max_depth=10, random_state=42)
     model.fit(X_train, y_train)
 
-    # Rolling predictions (NO LEAKAGE)
-    all_closes = list(train_df.sort_values("Date")["Close"].astype(float).values)
-
+    # Predict every row using a rolling window of actuals
     preds = []
+    history = list(closes)  # use full actuals for rolling window
 
-    for i in range(len(test_df)):
-        if len(all_closes) < lags:
-            history_window = [all_closes[0]] * (lags - len(all_closes)) + all_closes
-        else:
-            history_window = all_closes[-lags:]
-
-        # Build feature row
-        temp_series = pd.Series(all_closes)
-
-        returns = temp_series.pct_change().iloc[-1] if len(temp_series) > 1 else 0
-        rolling_mean_5 = temp_series.rolling(5).mean().iloc[-1]
-        rolling_std_5 = temp_series.rolling(5).std().iloc[-1]
-        day_of_week = test_df["Date"].iloc[i].dayofweek
-
-        feature_row = np.array(
-            history_window + [returns, rolling_mean_5, rolling_std_5, day_of_week]
-        ).reshape(1, -1)
-
-        pred = model.predict(feature_row)[0]
+    for i in range(n):
+        if i < lags:
+            preds.append(closes[i])  # not enough history, use actual
+            continue
+        features = np.array(history[i - lags:i]).reshape(1, -1)
+        pred = model.predict(features)[0]
         preds.append(pred)
 
-        # IMPORTANT: only use prediction (no actual leakage)
-        all_closes.append(pred)
-
-    return pd.Series(preds, index=test_df["Date"])
-
+    return pd.Series(preds, index=df["Date"])
 
 # ---------------------------------------------
 # Prophet
 # ---------------------------------------------
-def forecast_prophet(train_df, test_df):
-    if len(train_df) < 2:
-        val = train_df["Close"].iloc[-1] if len(train_df) > 0 else 0
-        return pd.Series([val] * len(test_df), index=test_df["Date"])
+def forecast_prophet(df):
+    if len(df) < 2:
+        return pd.Series(df["Close"].values, index=df["Date"])
 
-    history = train_df[["Date", "Close"]].rename(columns={"Date": "ds", "Close": "y"})
-
+    history = df[["Date", "Close"]].rename(columns={"Date": "ds", "Close": "y"})
     model = Prophet(
         daily_seasonality=False,
         weekly_seasonality=True,
@@ -130,21 +109,12 @@ def forecast_prophet(train_df, test_df):
         seasonality_mode="additive",
         changepoint_prior_scale=0.05
     )
-
     model.fit(history)
-
-    future = model.make_future_dataframe(periods=len(test_df), freq='D')
-    forecast = model.predict(future)
-
-    forecast_series = forecast.set_index("ds")["yhat"]
-    aligned = forecast_series.reindex(pd.to_datetime(test_df["Date"]), method="nearest")
-    aligned.index = pd.to_datetime(test_df["Date"])
-
-    return aligned
-
+    forecast = model.predict(history)
+    return pd.Series(forecast["yhat"].values, index=df["Date"])
 
 # ---------------------------------------------
-# Run forecasts
+# Run forecasts for all tickers
 # ---------------------------------------------
 for ticker in tickers:
     df_ticker = (
@@ -154,32 +124,25 @@ for ticker in tickers:
         .reset_index(drop=True)
     )
 
-    # ✅ Proper split
-    split = int(len(df_ticker) * 0.8)
-    train = df_ticker.iloc[:split]
-    test = df_ticker.iloc[split:]
+    print(f"Computing {ticker} ({len(df_ticker)} rows)...")
 
-    print(f"Computing forecasts for {ticker}...")
-
-    arima = forecast_arima(train, test)
-    rf = forecast_rf(train, test)
-    prophet = forecast_prophet(train, test)
+    arima_preds = forecast_arima(df_ticker)
+    rf_preds = forecast_rf(df_ticker)
+    prophet_preds = forecast_prophet(df_ticker)
 
     combined = pd.DataFrame({
-        "Date": test["Date"],
-        "Actual": test["Close"].values,
-        "ARIMA": arima.values,
-        "RF": rf.values,
-        "Prophet": prophet.values
+        "Date": df_ticker["Date"],
+        "Actual": df_ticker["Close"],
+        "ARIMA": arima_preds.values,
+        "RF": rf_preds.values,
+        "Prophet": prophet_preds.values
     })
 
     output_file = os.path.join(output_dir, f"{ticker}_forecasts.csv")
-
     if ticker == "GOOG":
         output_file = os.path.join(output_dir, "GOOGL_forecasts.csv")
 
     combined.to_csv(output_file, index=False)
+    print(f"  Saved → {output_file}")
 
-    print(f"Saved → {output_file}")
-
-print("✅ Finished all forecasts.")
+print("✅ Done.")
