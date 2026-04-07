@@ -105,6 +105,8 @@ for ticker in tickers:
         "Prophet": prophet.values
     })
     output_file = os.path.join(output_dir, f"{ticker}_forecasts.csv")
+    if ticker == "GOOG":
+        output_file = os.path.join(output_dir, "GOOGL_forecasts.csv")
     combined.to_csv(output_file, index=False)
     print(f"Saved forecasts for {ticker} → {output_file}")
 
