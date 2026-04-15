@@ -28,3 +28,11 @@ jobs:
       # Run the update script
       - name: Run stock update
         run: python StockBI/etl/update_stock_data.py
+
+      - name: Commit and push updated data
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add .
+          git commit -m "Update stock data" || echo "No changes to commit"
+          git push
