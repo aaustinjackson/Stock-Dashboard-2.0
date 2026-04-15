@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 # ---------------------------------------------
 # Configuration
 # ---------------------------------------------
-DATA_PATH = r"C:\Users\austi\PycharmProjects\StockBI\data\top10_stock_data_cleaned.csv"
+DATA_PATH = os.path.join("StockBI", "data", "top10_stock_data_cleaned.csv")
 TICKERS = ["AAPL", "MSFT", "NVDA", "AMZN", "META", "TSLA", "GOOG", "NFLX", "AVGO", "JPM", "VRT"]
 START_DATE = "2024-01-01"
 
